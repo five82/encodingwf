@@ -12,8 +12,9 @@ mkdir -p /app/videos/input \
 ffmpeg -i /app/videos/input/input.mkv -c:v copy -an -map 0 -segment_time 00:03:00 -f segment -reset_timestamps 1 /app/videos/segments/%04d.mkv
 
 # encode the segments
-for i in segments/*.mkv; do
-  /app/ab-av1 auto-encode -e libsvtav1 --svt tune=0 --keyint 5s --min-vmaf 93 --preset 4 --vmaf n_threads=32:n_subsample=3 --samples 3 --enc fps_mode=passthrough --input "$i" --output /app/videos/encoded-segments/"$i"
+cd /app/videos/segments
+for f in *.mkv; do
+    /app/ab-av1 auto-encode -e libsvtav1 --svt tune=0 --keyint 5s --min-vmaf 93 --preset 4 --vmaf n_threads=32:n_subsample=3 --samples 3 --enc fps_mode=passthrough --input "$f" --output /app/videos/encoded-segments/"$(basename "$f")"
 done
 
 # concatenate the encoded segments
