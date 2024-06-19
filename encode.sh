@@ -2,24 +2,33 @@
 
 # encoding workflow
 
+# variables
+input_dir="/app/videos/input"
+input_file="input.mkv"
+working_dir="/app/videos/working"
+working_file="working.mkv"
+output_dir="/app/videos/output"
+output_file="output.mkv"
+segment_dir="/app/videos/segments"
+encoded_segment_dir="/app/videos/encoded-segments"
 
 # functions
 segment_video() {
     ffmpeg \
-        -i /app/videos/input/input.mkv \
+        -i "$input_dir/$input_file" \
         -c:v copy \
         -an \
         -map 0 \
         -segment_time 00:01:00 \
         -f segment \
         -reset_timestamps 1 \
-        /app/videos/segments/%04d.mkv
+        "$segment_dir"/%04d.mkv
 }
 
 encode_segments() {
-    cd /app/videos/segments
+    cd "$segment_dir"
     for f in *.mkv; do
-        /app/ab-av1 \
+        ab-av1 \
             auto-encode \
             -e libsvtav1 \
             --svt tune=0 \
@@ -30,7 +39,7 @@ encode_segments() {
             --samples 3 \
             --enc fps_mode=passthrough \
             --input "$f" \
-            --output /app/videos/encoded-segments/"$(basename "$f")"
+            --output "$encoded_segment_dir"/"$(basename "$f")"
     done
 }
 
@@ -38,45 +47,68 @@ concatenate_segments() {
     ffmpeg \
         -f concat \
         -safe 0 \
-        -i <(for f in /app/videos/encoded-segments/*.mkv; do echo "file '$f'"; done) \
-        -c copy /app/videos/output/output.mkv
+        -i <(for f in "$encoded_segment_dir"/*.mkv; do echo "file '$f'"; done) \
+        -c copy "$working_dir/$working_file"
 }
 
 encode_audio() {
-    input_file="/app/videos/input/input.mkv"
-    num_tracks=$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$input_file" | wc -l)
+    num_tracks=$(ffprobe \
+        -v error \
+        -select_streams a \
+        -show_entries stream=index \
+        -of csv=p=0 \
+        "$input_dir/$input_file" \
+        wc -l)
     for ((i=0; i<num_tracks; i++)); do
-        num_channels=$(ffprobe -v error -select_streams "a:$i" -show_entries stream=channels -of csv=p=0 "$input_file")
+        num_channels=$(ffprobe \
+            -v error \
+            -select_streams "a:$i" \
+            -show_entries stream=channels \
+            -of csv=p=0 \
+            "$input_dir/$input_file")
         bitrate=$((num_channels * 64))
         ffmpeg \
-            -i "$input_file" \
+            -i "$input_dir/$input_file" \
             -map "0:a:$i" \
             -c:a libopus \
             -af aformat=channel_layouts="7.1|5.1|stereo|mono" \
             -b:a "${bitrate}k" \
-            "/app/videos/output/output-audio-$i.mkv"
+            "$working_dir/$working_file-audio-$i.mkv"
     done
 }
 
 remux_tracks() {
     ffmpeg \
-        -i /app/videos/output/output.mkv \
-        $(for ((i=0; i<num_tracks; i++)); do echo "-i /app/videos/output/output-audio-$i.mkv"; done) \
-        $(for ((i=0; i<num_tracks; i++)); do echo "-map $i:a"; done) \
-        $(if ffprobe -i /app/videos/input/input.mkv -show_chapters -v quiet -of csv=p=0; then echo "-map 0:c"; fi) \
-        $(if ffprobe -i /app/videos/input/input.mkv -show_entries stream=index:stream_tags=language -select_streams s -v quiet -of csv=p=0; then echo "-map 0:s"; fi) \
+        -i "$working_dir/$working_file" \
+            "$(for ((i=0; i<num_tracks; i++)); \
+                do echo "-i $working_dir/$working_file-audio-$i.mkv"; \
+                done)" \
+            "$(for ((i=0; i<num_tracks; i++)); \
+                do echo "-map $i:a"; \
+                done)" \
+            "$(if ffprobe -i "$input_dir/$input_file" \
+                -show_chapters \
+                -v quiet \
+                -of csv=p=0; \
+                then echo "-map 0:c"; \
+            fi)" \
+            "$(if ffprobe -i "$input_dir/$input_file" \
+                -show_entries stream=index:stream_tags=language \
+                -select_streams s \
+                -v quiet \
+                -of csv=p=0; \
+                then echo "-map 0:s"; \
+            fi)" \
         -c copy \
-        /app/videos/output/finaloutput.mkv
-        rm -rf /app/videos/output/output-audio-*.mkv
-        rm -rf /app/videos/output/output.mkv
+        "$output_dir/$output_file"
 }
 
-
 # create required directories
-mkdir -p /app/videos/input \
-  /app/videos/segments \
-  /app/videos/encoded-segments \
-  /app/videos/output
+mkdir -p \
+    "$input_dir" \
+    "$segment_dir" \
+    "$encoded_segment_dir" \
+    "$output_dir"
 
 # segment, encode, and remux
 segment_video
@@ -86,5 +118,7 @@ encode_audio
 remux_tracks
 
 # cleanup
-rm -rf /app/videos/segments \
-  /app/videos/encoded-segments
+rm -rf \
+    "$segment_dir" \
+    "$encoded_segment_dir" \
+    "$working_dir"
