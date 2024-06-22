@@ -19,7 +19,7 @@ segment_video() {
         -c:v copy \
         -an \
         -map 0 \
-        -segment_time 00:03:00 \
+        -segment_time 00:02:00 \
         -f segment \
         -reset_timestamps 1 \
         "$segment_dir"/%04d.mkv
@@ -35,7 +35,7 @@ encode_segments() {
             --keyint 5s \
             --min-vmaf 93 \
             --preset 4 \
-            --vmaf n_subsample=3 \
+            --vmaf n_subsample=4 \
             --sample-every "1m" \
             --enc fps_mode=passthrough \
             --input "$f" \
@@ -58,7 +58,7 @@ encode_audio() {
         -show_entries stream=index \
         -of csv=p=0 \
         "$input_dir/$input_file" \
-        wc -l)
+        | wc -l)
     for ((i=0; i<num_tracks; i++)); do
         num_channels=$(ffprobe \
             -v error \
