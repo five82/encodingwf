@@ -36,7 +36,7 @@ encode_segments() {
             --min-vmaf 93 \
             --preset 4 \
             --vmaf n_subsample=3 \
-            --sample_every "1m" \
+            --sample-every "1m" \
             --enc fps_mode=passthrough \
             --input "$f" \
             --output "$encoded_segment_dir"/"$(basename "$f")"
