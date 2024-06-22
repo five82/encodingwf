@@ -19,7 +19,7 @@ segment_video() {
         -c:v copy \
         -an \
         -map 0 \
-        -segment_time 00:01:00 \
+        -segment_time 00:03:00 \
         -f segment \
         -reset_timestamps 1 \
         "$segment_dir"/%04d.mkv
@@ -35,8 +35,8 @@ encode_segments() {
             --keyint 5s \
             --min-vmaf 93 \
             --preset 4 \
-            --vmaf n_threads=32:n_subsample=3 \
-            --samples 3 \
+            --vmaf n_subsample=3 \
+            --sample_every "1m" \
             --enc fps_mode=passthrough \
             --input "$f" \
             --output "$encoded_segment_dir"/"$(basename "$f")"
@@ -107,15 +107,22 @@ remux_tracks() {
 mkdir -p \
     "$input_dir" \
     "$segment_dir" \
+    "$working_dir" \
     "$encoded_segment_dir" \
     "$output_dir"
 
 # segment, encode, and remux
+echo "Begin segmenting video"
 segment_video
+echo "Begin encoding segments"
 encode_segments
+echo "Begin concatenating segments"
 concatenate_segments
+echo "Begin encoding audio"
 encode_audio
+echo "Begin remuxing tracks"
 remux_tracks
+echo "Encoding complete"
 
 # cleanup
 rm -rf \
