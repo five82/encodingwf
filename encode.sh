@@ -67,13 +67,14 @@ encode_audio() {
             -of csv=p=0 \
             "$input_dir/$input_file.mkv")
         bitrate=$((num_audio_channels * 64))
+        echo "Encoding audio track $i with $num_audio_channels channels at ${bitrate}k"
         ffmpeg \
             -i "$input_dir/$input_file.mkv" \
             -map "0:a:$i" \
             -c:a libopus \
             -af aformat=channel_layouts="7.1|5.1|stereo|mono" \
             -b:a "${bitrate}k" \
-            "$working_dir/$working_file-audio-$i.mkv"
+            "$working_dir/audio-$i.mkv"
     done
 }
 
@@ -106,15 +107,19 @@ remux_tracks() {
     fi
     
     ffmpeg \
-        -i "$working_dir/$working_file.mkv" \
-        $(for ((i=0; i<num_audio_tracks; i++)); \
-            do echo "-i \"$working_dir/$working_file-audio-$i.mkv\""; done) \
-        $(for ((i=0; i<num_audio_tracks; i++)); \
-            do echo "-map $i:a?"; done) \
-        $map_chapters \
-        $map_subtitles \
-        -c copy \
-        "$output_dir/$output_file.mkv"
+    -i "$working_dir/${working_file}.mkv" \
+    $(for ((i=0; i<num_audio_tracks; i++)); do \
+        audio_file="${working_dir}/audio-${i}.mkv"; \
+        if [ -f "$audio_file" ]; then \
+            echo "-i \"$audio_file\""; \
+        else \
+            echo "Audio file $audio_file not found." >&2; \
+            exit 1; \
+        fi; \
+    done) \
+    $(for ((i=0; i<num_audio_tracks; i++)); do echo "-map $i:a?"; done) \
+    -c copy \
+    "$output_dir/${output_file}.mkv"
 }
 
 # create required directories
