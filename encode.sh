@@ -79,47 +79,42 @@ encode_audio() {
 }
 
 remux_tracks() {
-    chapters_exist=$(ffprobe \
-        -i "$input_dir/$input_file.mkv" \
-        -show_chapters \
-        -v quiet \
-        -of csv=p=0 \
-        | wc -l)
+    chapters_exist=$(ffprobe -i "$input_dir/$input_file.mkk" -show_chapters -v quiet -of csv=p=0 | wc -l)
+    subtitles_exist=$(ffprobe -i "$input_dir/$input_file.mkv" -show_entries stream=index:stream_tags=language -select_streams s -v quiet -of csv=p=0 | wc -l)
 
-    subtitles_exist=$(ffprobe \
-        -i "$input_dir/$input_file.mkv" \
-        -show_entries stream=index:stream_tags=language \
-        -select_streams s \
-        -v quiet \
-        -of csv=p=0 \
-        | wc -l)
-    
     map_chapters=""
     if [ "$chapters_exist" -gt 0 ]; then
         map_chapters="-map 0:c"
     fi
-    
+
     map_subtitles=""
     if [ "$subtitles_exist" -gt 0 ]; then
         for ((i=0; i<num_subtitle_tracks; i++)); do
-            map_subtitle_tracks+=" -map $i:s"
+            map_subtitles+=" -map $i:s"
         done
     fi
-    
-    ffmpeg \
-    -i "$working_dir/${working_file}.mkv" \
-    $(for ((i=0; i<num_audio_tracks; i++)); do \
-        audio_file="${working_dir}/audio-${i}.mkv"; \
-        if [ -f "$audio_file" ]; then \
-            echo "-i \"$audio_file\""; \
-        else \
-            echo "Audio file $audio_file not found." >&2; \
-            exit 1; \
-        fi; \
-    done) \
-    $(for ((i=0; i<num_audio_tracks; i++)); do echo "-map $i:a?"; done) \
-    -c copy \
-    "$output_dir/${output_file}.mkv"
+
+    input_files=("$working_dir/${working_file}.mkv")
+    for ((i=0; i<num_audio_tracks; i++)); do
+        audio_file="${working_dir}/audio-${i}.mkv"
+        if [ -f "$audio_file" ]; then
+            input_files+=("$audio_file")
+        else
+            echo "Audio file $audio_file not found." >&2
+            exit 1
+        fi
+    done
+
+    ffmpeg_cmd=(ffmpeg)
+    for input_file in "${input_files[@]}"; do
+        ffmpeg_cmd+=(-i "$input_file")
+    done
+    for ((i=0; i<num_audio_tracks; i++)); do
+        ffmpeg_cmd+=(-map "$i:a?")
+    done
+    ffmpeg_cmd+=(-c copy "${output_dir}/${output_file}.mkv")
+
+    "${ffmpeg_cmd[@]}"
 }
 
 # create required directories
