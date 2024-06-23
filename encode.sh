@@ -4,11 +4,11 @@
 
 # variables
 input_dir="/app/videos/input"
-input_file="input.mkv"
+input_file="input"
 working_dir="/app/videos/working"
-working_file="working.mkv"
+working_file="working"
 output_dir="/app/videos/output"
-output_file="output.mkv"
+output_file="output"
 segment_dir="/app/videos/segments"
 encoded_segment_dir="/app/videos/encoded-segments"
 num_audio_tracks=$(ffprobe \
@@ -16,13 +16,13 @@ num_audio_tracks=$(ffprobe \
     -select_streams a \
     -show_entries stream=index \
     -of csv=p=0 \
-    "$input_dir/$input_file" \
+    "$input_dir/$input_file.mkv" \
     | wc -l)
 
 # functions
 segment_video() {
     ffmpeg \
-        -i "$input_dir/$input_file" \
+        -i "$input_dir/$input_file.mkv" \
         -c:v copy \
         -an \
         -map 0 \
@@ -55,7 +55,7 @@ concatenate_segments() {
         -f concat \
         -safe 0 \
         -i <(for f in "$encoded_segment_dir"/*.mkv; do echo "file '$f'"; done) \
-        -c copy "$working_dir/$working_file"
+        -c copy "$working_dir/$working_file.mkv"
 }
 
 encode_audio() {
@@ -65,10 +65,10 @@ encode_audio() {
             -select_streams "a:$i" \
             -show_entries stream=channels \
             -of csv=p=0 \
-            "$input_dir/$input_file")
+            "$input_dir/$input_file.mkv")
         bitrate=$((num_audio_channels * 64))
         ffmpeg \
-            -i "$input_dir/$input_file" \
+            -i "$input_dir/$input_file.mkv" \
             -map "0:a:$i" \
             -c:a libopus \
             -af aformat=channel_layouts="7.1|5.1|stereo|mono" \
@@ -79,14 +79,14 @@ encode_audio() {
 
 remux_tracks() {
     chapters_exist=$(ffprobe \
-        -i "$input_dir/$input_file" \
+        -i "$input_dir/$input_file.mkv" \
         -show_chapters \
         -v quiet \
         -of csv=p=0 \
         | wc -l)
 
     subtitles_exist=$(ffprobe \
-        -i "$input_dir/$input_file" \
+        -i "$input_dir/$input_file.mkv" \
         -show_entries stream=index:stream_tags=language \
         -select_streams s \
         -v quiet \
@@ -106,15 +106,15 @@ remux_tracks() {
     fi
     
     ffmpeg \
-        -i "$working_dir/$working_file" \
+        -i "$working_dir/$working_file.mkv" \
         $(for ((i=0; i<num_audio_tracks; i++)); \
-            do echo "-i $working_dir/$working_file-audio-$i.mkv"; done) \
+            do echo "-i \"$working_dir/$working_file-audio-$i.mkv\""; done) \
         $(for ((i=0; i<num_audio_tracks; i++)); \
             do echo "-map $i:a?"; done) \
         $map_chapters \
         $map_subtitles \
         -c copy \
-        "$output_dir/$output_file"
+        "$output_dir/$output_file.mkv"
 }
 
 # create required directories
