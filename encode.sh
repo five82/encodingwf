@@ -4,25 +4,34 @@
 
 # variables
 input_dir="/app/videos/input"
-input_file="input"
 working_dir="/app/videos/working"
-working_file="working"
 output_dir="/app/videos/output"
-output_file="output"
 segment_dir="/app/videos/segments"
 encoded_segment_dir="/app/videos/encoded-segments"
+log_dir="/app/videos/logs"
+
+# Dynamically read the first filename in the input directory
+input_path=$(find "$input_dir" -type f | head -n 1)
+if [ -z "$input_path" ]; then
+    echo "No input file found in $input_dir."
+    exit 1
+fi
+
+# Extract the base filename without the directory and extension
+vid_file=$(basename "$input_path" .mkv)
+
 num_audio_tracks=$(ffprobe \
     -v error \
     -select_streams a \
     -show_entries stream=index \
     -of csv=p=0 \
-    "$input_dir/$input_file.mkv" \
+    "$input_path" \
     | wc -l)
 
 # functions
 segment_video() {
     ffmpeg \
-        -i "$input_dir/$input_file.mkv" \
+        -i "$input_path" \
         -c:v copy \
         -an \
         -map 0 \
@@ -42,7 +51,7 @@ encode_segments() {
             --keyint 5s \
             --min-vmaf 93 \
             --preset 4 \
-            --vmaf n_subsample=4 \
+            --vmaf n_subsample=4:pool=harmonic_mean \
             --samples 3 \
             --enc fps_mode=passthrough \
             --input "$f" \
@@ -55,7 +64,7 @@ concatenate_segments() {
         -f concat \
         -safe 0 \
         -i <(for f in "$encoded_segment_dir"/*.mkv; do echo "file '$f'"; done) \
-        -c copy "$working_dir/$working_file.mkv"
+        -c copy "$working_dir/$vid_file"
 }
 
 encode_audio() {
@@ -65,11 +74,11 @@ encode_audio() {
             -select_streams "a:$i" \
             -show_entries stream=channels \
             -of csv=p=0 \
-            "$input_dir/$input_file.mkv")
+            "$input_path")
         bitrate=$((num_audio_channels * 64))
         echo "Encoding audio track $i with $num_audio_channels channels at ${bitrate}k"
         ffmpeg \
-            -i "$input_dir/$input_file.mkv" \
+            -i "$input_path" \
             -map "0:a:$i" \
             -c:a libopus \
             -af aformat=channel_layouts="7.1|5.1|stereo|mono" \
@@ -79,8 +88,8 @@ encode_audio() {
 }
 
 remux_tracks() {
-    chapters_exist=$(ffprobe -i "$input_dir/$input_file.mkk" -show_chapters -v quiet -of csv=p=0 | wc -l)
-    subtitles_exist=$(ffprobe -i "$input_dir/$input_file.mkv" -show_entries stream=index:stream_tags=language -select_streams s -v quiet -of csv=p=0 | wc -l)
+    chapters_exist=$(ffprobe -i "$input_path" -show_chapters -v quiet -of csv=p=0 | wc -l)
+    subtitles_exist=$(ffprobe -i "$input_path" -show_entries stream=index:stream_tags=language -select_streams s -v quiet -of csv=p=0 | wc -l)
 
     map_chapters=""
     if [ "$chapters_exist" -gt 0 ]; then
@@ -94,7 +103,7 @@ remux_tracks() {
         done
     fi
 
-    input_files=("$working_dir/${working_file}.mkv")
+    input_files=("$working_dir/${vid_file}")
     for ((i=0; i<num_audio_tracks; i++)); do
         audio_file="${working_dir}/audio-${i}.mkv"
         if [ -f "$audio_file" ]; then
@@ -106,13 +115,13 @@ remux_tracks() {
     done
 
     ffmpeg_cmd=(ffmpeg)
-    for input_file in "${input_files[@]}"; do
-        ffmpeg_cmd+=(-i "$input_file")
+    for vid_file in "${input_files[@]}"; do
+        ffmpeg_cmd+=(-i "$vid_file")
     done
     for ((i=0; i<num_audio_tracks; i++)); do
         ffmpeg_cmd+=(-map "$i:a?")
     done
-    ffmpeg_cmd+=(-c copy "${output_dir}/${output_file}.mkv")
+    ffmpeg_cmd+=(-c copy "${output_dir}/${vid_file}")
 
     "${ffmpeg_cmd[@]}"
 }
@@ -123,7 +132,8 @@ mkdir -p \
     "$segment_dir" \
     "$working_dir" \
     "$encoded_segment_dir" \
-    "$output_dir"
+    "$output_dir" \
+    "$log_dir"
 
 # segment, encode, and remux
 echo "Begin segmenting video"
