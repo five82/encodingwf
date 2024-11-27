@@ -234,9 +234,9 @@ encode_segments() {
         ab-av1 auto-encode \
             -e libsvtav1 \
             --svt tune=3 \
-            --svt film_grain=8 \
-            --svt film_grain_denoise=1 \
-            --svt adaptive_film_grain=1 \
+            --svt film-grain=8 \
+            --svt film-grain-denoise=1 \
+            --svt adaptive-film-grain=1 \
             $dv_params \
             --keyint 10s \
             --min-vmaf 92 \
@@ -244,6 +244,7 @@ encode_segments() {
             --vmaf n_subsample=8:pool=harmonic_mean \
             --samples 3 \
             --sample-duration 1sec \
+            --verbose \
             --input "$f" \
             --output "${ENCODED_SEGMENTS_DIR}/$(basename "$f")"
 
