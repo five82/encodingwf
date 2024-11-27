@@ -15,6 +15,13 @@ readonly DIRS=(
 readonly BASE_DIR="/app/videos"
 readonly MIN_FILE_SIZE=1024  # 1KB minimum file size
 
+# Definitions
+declare -g IS_DOLBY_VISION=false
+declare -g CURRENT_FILE=""
+declare -A video_start_times
+declare -A video_end_times
+declare -a processed_videos
+
 # Color definitions
 declare -gr RED='\033[0;31m'
 declare -gr GREEN='\033[0;32m'
@@ -43,6 +50,12 @@ config() {
     done
 }
 
+# Preparing directories for each video being processed
+prepare_directories() {
+    log "${PURPLE}Preparing working directories for new source video${NC}"
+    mkdir -p "$SEGMENTS_DIR" "$ENCODED_SEGMENTS_DIR" "$WORKING_DIR"
+}
+
 # Logging
 setup_logging() {
     log "${PURPLE}Setting up logging${NC}"
@@ -58,16 +71,26 @@ setup_logging() {
 }
 
 log() {
-    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} ${GREEN}$*${NC}"
+    local file_info=""
+    [[ -n "$CURRENT_FILE" ]] && file_info=" [${LIGHTBLUE}${CURRENT_FILE}${NC}]"
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC}${file_info} ${GREEN}$*${NC}"
 }
 
 error() {
-    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} ${RED}ERROR: $*${NC}" >&2
+    local file_info=""
+    [[ -n "$CURRENT_FILE" ]] && file_info=" [${LIGHTBLUE}${CURRENT_FILE}${NC}]"
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC}${file_info} ${RED}ERROR: $*${NC}" >&2
     exit 1
 }
 
 warn() {
-    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} ${YELLOW}WARNING: $*${NC}"
+    local file_info=""
+    [[ -n "$CURRENT_FILE" ]] && file_info=" [${LIGHTBLUE}${CURRENT_FILE}${NC}]"
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC}${file_info} ${YELLOW}WARNING: $*${NC}"
+}
+
+log_summary() {
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} ${GREEN}$*${NC}"
 }
 
 # Validation functions
@@ -99,12 +122,12 @@ validate_segments() {
     [[ $segment_count -lt $min_segments ]] && error "No segments found in $dir"
 
     local invalid_segments=0
-    while IFS= read -r segment; do
+    while IFS= read -r -d $'\0' segment; do
         if ! validate_video_file "$segment" "Segment validation" >/dev/null 2>&1; then
             log "${YELLOW}Warning: Invalid segment found: $segment${NC}"
             ((invalid_segments++))
         fi
-    done < <(find "$dir" -name "*.mkv" -type f)
+    done < <(find "$dir" -name "*.mkv" -type f -print0)
 
     [[ $invalid_segments -gt 0 ]] && error "Found $invalid_segments invalid segments"
 
@@ -140,12 +163,10 @@ detect_dolby_vision() {
 
     if [[ -n "$is_dv" ]]; then
         log "${LIGHTBLUE}Dolby Vision detected${NC}"
-        # Set DV variables only once at the end
-        declare -gr IS_DOLBY_VISION=true
+        IS_DOLBY_VISION=true
     else
         log "${LIGHTBLUE}Dolby Vision not detected. Continuing with standard encoding...${NC}"
-        # Set DV variables only once at the end
-        declare -gr IS_DOLBY_VISION=false
+        IS_DOLBY_VISION=false
     fi
 
     return 0
@@ -158,27 +179,6 @@ init() {
     for dir in "${DIRS[@]}"; do
         mkdir -p "${BASE_DIR}/${dir}"
     done
-
-    # Find input file
-    log "${PURPLE}Finding input file${NC}"
-    local input_path
-    input_path=$(find "$INPUT_DIR" -type f | head -n 1)
-    if [[ -z "$input_path" ]]; then
-        error "No input file found in $INPUT_DIR"
-    fi
-    log "${LIGHTBLUE}Found input file: $input_path${NC}"
-
-    # Validate input file
-    validate_video_file "$input_path" "Input validation"
-
-    # Set global variables
-    declare -gr INPUT_PATH="$input_path"
-    declare -gr VID_FILE=$(basename "$input_path" .mkv)
-    declare -gr NUM_AUDIO_TRACKS=$(ffprobe -v error -select_streams a \
-        -show_entries stream=index -of csv=p=0 "$input_path" | wc -l)
-
-    # Detect Dolby Vision
-    detect_dolby_vision "$INPUT_PATH"
 }
 
 # Video processing functions
@@ -200,20 +200,25 @@ segment_video() {
 encode_segments() {
     log "${PURPLE}Encoding segments...${NC}"
     local segment_count=0
-    local total_segments=$(find "${SEGMENTS_DIR}" -name "*.mkv" | wc -l)
+    local total_segments
+    total_segments=$(find "${SEGMENTS_DIR}" -name "*.mkv" -type f | wc -l)
     log "${PURPLE}Total segments to encode: $total_segments${NC}"
     log "${PURPLE}Segments directory: $SEGMENTS_DIR${NC}"
 
     cd "$SEGMENTS_DIR"
     # Check if any .mkv files exist first
     shopt -s nullglob  # Handle no matches gracefully
-    files=(*.mkv)
+    local files=()
+    while IFS= read -r -d $'\0'; do
+        files+=("$REPLY")
+    done < <(find . -maxdepth 1 -name "*.mkv" -print0)
+
     if [ ${#files[@]} -eq 0 ]; then
         error "No mkv files found in $SEGMENTS_DIR"
         exit 1
     fi
 
-    for f in *.mkv; do
+    for f in "${files[@]}"; do
         log "${LIGHTBLUE}Found file - $f${NC}"
         segment_count=$((segment_count + 1)) || { log "${RED}Error: Failed to increment segment_count${NC}"; exit 1; }
         log "${PURPLE}Encoding segment $segment_count of $total_segments: $f${NC}"
@@ -252,9 +257,11 @@ concatenate_segments() {
 
     # Create concat file separately without logging
     local concat_file="${WORKING_DIR}/concat.txt"
-    for f in "${ENCODED_SEGMENTS_DIR}"/*.mkv; do
-        echo "file '$f'" >> "$concat_file"
-    done
+
+    # Use find with -print0 and while read to handle spaces in filenames
+    while IFS= read -r -d $'\0' f; do
+        printf "file '%s'\n" "$f" >> "$concat_file"
+    done < <(find "${ENCODED_SEGMENTS_DIR}" -name "*.mkv" -print0 | sort -z)
 
     # Use the concat file instead of inline generation
     ffmpeg -f concat -safe 0 \
@@ -270,7 +277,7 @@ concatenate_segments() {
 }
 
 encode_audio() {
-    log "${PURPLE}Encoding audio tracks...${NC}"
+    log "${PURPLE}Encoding audio tracks${NC}"
     for ((i=0; i<NUM_AUDIO_TRACKS; i++)); do
         local num_channels
         num_channels=$(ffprobe -v error -select_streams "a:$i" \
@@ -296,19 +303,20 @@ encode_audio() {
                 ;;
         esac
 
+        local output_file="${WORKING_DIR}/audio-${i}.mkv"
         log "${PURPLE}Encoding audio track $i with $num_channels channels at ${bitrate}k${NC}"
         ffmpeg -i "$INPUT_PATH" \
             -map "a:$i" \
             -c:a libopus \
-            -af aformat=channel_layouts="7.1|5.1|stereo|mono" \
+            -af "aformat=channel_layouts=7.1|5.1|stereo|mono" \
             -application audio \
             -vbr on \
             -compression_level 10 \
             -frame_duration 20 \
             -b:a "${bitrate}k" \
             -avoid_negative_ts make_zero \
-            "${WORKING_DIR}/audio-${i}.mkv" || {
-                log_error "Failed to encode audio track $i"
+            "$output_file" || {
+                error "Failed to encode audio track $i"
                 return 1
             }
     done
@@ -375,13 +383,54 @@ main() {
     log "${CYAN}Start time: $(date -d @${START_TIME} '+%Y-%m-%d %H:%M:%S')${NC}"
     log "${PURPLE}Starting video encoding workflow${NC}"
 
-    segment_video
-    encode_segments
-    concatenate_segments
-    encode_audio
-    remux_tracks
+    # Find all video files
+    shopt -s nullglob  # Handle no matches gracefully
+    local input_files=()
+    while IFS= read -r -d $'\0'; do
+        input_files+=("$REPLY")
+    done < <(find "${INPUT_DIR}" -maxdepth 1 -name "*.mkv" -print0)
 
-    cleanup
+    local total_files=${#input_files[@]}
+
+    if [[ $total_files -eq 0 ]]; then
+        error "No input files found in $INPUT_DIR"
+    fi
+
+    log "${CYAN}Found $total_files files to process${NC}"
+
+    # Process each file
+    local current_file=0
+    for input_path in "${input_files[@]}"; do
+        current_file=$((current_file + 1))
+
+        # Set global variables for current file
+        declare -g INPUT_PATH="$input_path"
+        declare -g VID_FILE=$(basename "$input_path" .mkv)
+        declare -g CURRENT_FILE="$VID_FILE"  # Set the current filename
+        declare -g NUM_AUDIO_TRACKS=$(ffprobe -v error -select_streams a \
+            -show_entries stream=index -of csv=p=0 "$input_path" | wc -l)
+
+        # Record start time for this video
+        video_start_times["$VID_FILE"]=$(date +%s)
+        processed_videos+=("$VID_FILE")
+
+        log "${CYAN}Processing file $current_file of $total_files: $input_path${NC}"
+
+        # Process current file
+        prepare_directories
+        detect_dolby_vision "$INPUT_PATH"
+        segment_video
+        encode_segments
+        concatenate_segments
+        encode_audio
+        remux_tracks
+        cleanup
+
+        # Record end time for this video
+        video_end_times["$VID_FILE"]=$(date +%s)
+
+        log "${GREEN}Completed processing: $input_path${NC}"
+    done
 
     # Add timing information
     local END_TIME=$(date +%s)
@@ -392,10 +441,31 @@ main() {
     local MINUTES=$(((DURATION % 3600) / 60))
     local SECONDS=$((DURATION % 60))
 
-    log "${CYAN}Encoding workflow complete${NC}"
-    log "${CYAN}Start time: $(date -d @${START_TIME} '+%Y-%m-%d %H:%M:%S')${NC}"
-    log "${CYAN}End time: $(date -d @${END_TIME} '+%Y-%m-%d %H:%M:%S')${NC}"
-    log "${CYAN}Duration: ${HOURS}h ${MINUTES}m ${SECONDS}s${NC}"
+    # Print summary
+    log_summary "${CYAN}=== Encoding Summary ===${NC}"
+    log_summary "${YELLOW}Overall Process${NC}"
+    log_summary "${CYAN}Start time: $(date -d @${START_TIME} '+%Y-%m-%d %H:%M:%S')${NC}"
+    log_summary "${CYAN}End time: $(date -d @${END_TIME} '+%Y-%m-%d %H:%M:%S')${NC}"
+    log_summary "${CYAN}Total Duration: ${HOURS}h ${MINUTES}m ${SECONDS}s${NC}"
+
+    log_summary "${YELLOW}Individual Video Processing Times:${NC}"
+    for video in "${processed_videos[@]}"; do
+        local vid_start=${video_start_times[$video]}
+        local vid_end=${video_end_times[$video]}
+        local vid_duration=$((vid_end - vid_start))
+
+        # Convert video duration to hours, minutes, seconds
+        local vid_hours=$((vid_duration / 3600))
+        local vid_minutes=$(((vid_duration % 3600) / 60))
+        local vid_seconds=$((vid_duration % 60))
+
+        log_summary "${LIGHTBLUE}$video:${NC}"
+        log_summary "  ${CYAN}Start: $(date -d @${vid_start} '+%Y-%m-%d %H:%M:%S')${NC}"
+        log_summary "  ${CYAN}End: $(date -d @${vid_end} '+%Y-%m-%d %H:%M:%S')${NC}"
+        log_summary "  ${CYAN}Duration: ${vid_hours}h ${vid_minutes}m ${vid_seconds}s${NC}"
+    done
+
+    log_summary "${YELLOW}Encoding workflow complete${NC}"
 }
 
 # Run main function
