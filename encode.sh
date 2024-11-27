@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+readonly START_TIME=$(date +%s)
 
 # Constants
 readonly DIRS=(
@@ -97,6 +98,27 @@ validate_audio_tracks() {
     log "Successfully validated $expected_tracks audio tracks"
 }
 
+detect_dolby_vision() {
+    log "Detecting Dolby Vision..."
+    local file="$1"
+
+    # Use mediainfo to detect Dolby Vision
+    local is_dv
+    is_dv=$(mediainfo "$file" | grep "Dolby Vision" || true)
+
+    if [[ -n "$is_dv" ]]; then
+        log "Dolby Vision detected"
+        # Set DV variables only once at the end
+        declare -gr IS_DOLBY_VISION=true
+    else
+        log "Dolby Vision not detected. Continuing with standard encoding..."
+        # Set DV variables only once at the end
+        declare -gr IS_DOLBY_VISION=false
+    fi
+
+    return 0
+}
+
 # Initialization
 init() {
     # Create required directories
@@ -122,6 +144,9 @@ init() {
     declare -gr VID_FILE=$(basename "$input_path" .mkv)
     declare -gr NUM_AUDIO_TRACKS=$(ffprobe -v error -select_streams a \
         -show_entries stream=index -of csv=p=0 "$input_path" | wc -l)
+
+    # Detect Dolby Vision
+    detect_dolby_vision "$INPUT_PATH"
 }
 
 # Video processing functions
@@ -131,7 +156,7 @@ segment_video() {
         -c:v copy \
         -an \
         -map 0 \
-        -segment_time 00:02:00 \
+        -segment_time 00:01:00 \
         -f segment \
         -reset_timestamps 1 \
         "${SEGMENTS_DIR}/%04d.mkv"
@@ -161,16 +186,24 @@ encode_segments() {
         segment_count=$((segment_count + 1)) || { log "Error: Failed to increment segment_count"; exit 1; }
         log "Encoding segment $segment_count of $total_segments: $f"
 
+        local dv_params=""
+        # Disabling Dolby Vision support for now until there's a way to direcly copy Dolby
+        # Vision profile 10 metadata from source to output. Encoding each chunk seperately
+        # apparently causes metadata corruption.
+        # if [[ "$IS_DOLBY_VISION" == true ]]; then
+        #     dv_params="--enc dolbyvision=true"
+        # fi
+
         ab-av1 auto-encode \
             -e libsvtav1 \
-            --svt tune=0 \
-            --keyint 5s \
-            --min-vmaf 93 \
-            --preset 4 \
-            --vmaf n_subsample=4:pool=harmonic_mean \
-            --samples 9 \
+            --svt tune=3 \
+            $dv_params \
+            --keyint 10s \
+            --min-vmaf 92 \
+            --preset 6 \
+            --vmaf n_subsample=8:pool=harmonic_mean \
+            --samples 3 \
             --sample-duration 1sec \
-            --enc fps_mode=passthrough \
             --input "$f" \
             --output "${ENCODED_SEGMENTS_DIR}/$(basename "$f")"
 
@@ -199,16 +232,45 @@ encode_audio() {
         local num_channels
         num_channels=$(ffprobe -v error -select_streams "a:$i" \
             -show_entries stream=channels -of csv=p=0 "$INPUT_PATH")
-        local bitrate=$((num_channels * 64))
+
+        # Determine optimal bitrate based on channel count
+        local bitrate
+        case $num_channels in
+            1)  # Mono
+                bitrate=64
+                ;;
+            2)  # Stereo
+                bitrate=128
+                ;;
+            6)  # 5.1
+                bitrate=320
+                ;;
+            8)  # 7.1
+                bitrate=448
+                ;;
+            *)  # Default fallback
+                bitrate=$((num_channels * 48))
+                ;;
+        esac
 
         log "Encoding audio track $i with $num_channels channels at ${bitrate}k"
         ffmpeg -i "$INPUT_PATH" \
             -map "a:$i" \
             -c:a libopus \
             -af aformat=channel_layouts="7.1|5.1|stereo|mono" \
+            -application audio \
+            -vbr on \
+            -compression_level 10 \
+            -frame_duration 20 \
             -b:a "${bitrate}k" \
-            "${WORKING_DIR}/audio-${i}.mkv"
+            -avoid_negative_ts make_zero \
+            "${WORKING_DIR}/audio-${i}.mkv" || {
+                log_error "Failed to encode audio track $i"
+                return 1
+            }
     done
+
+    log "Audio encoding completed successfully"
 
     # Validate all audio tracks
     validate_audio_tracks "$WORKING_DIR" "$NUM_AUDIO_TRACKS"
@@ -267,6 +329,7 @@ main() {
     setup_logging
     init
 
+    log "Start time: $(date -d @${START_TIME} '+%Y-%m-%d %H:%M:%S')"
     log "Starting video encoding workflow"
 
     segment_video
@@ -277,7 +340,19 @@ main() {
 
     cleanup
 
-    log "Encoding workflow complete"
+    # Add timing information
+        END_TIME=$(date +%s)
+        DURATION=$((END_TIME - START_TIME))
+
+        # Convert seconds to hours, minutes, seconds
+        HOURS=$((DURATION / 3600))
+        MINUTES=$(((DURATION % 3600) / 60))
+        SECONDS=$((DURATION % 60))
+
+        log "Encoding workflow complete"
+        log "Start time: $(date -d @${START_TIME} '+%Y-%m-%d %H:%M:%S')"
+        log "End time: $(date -d @${END_TIME} '+%Y-%m-%d %H:%M:%S')"
+        log "Duration: ${HOURS}h ${MINUTES}m ${SECONDS}s"
 }
 
 # Run main function
