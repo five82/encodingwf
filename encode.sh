@@ -234,6 +234,9 @@ encode_segments() {
         ab-av1 auto-encode \
             -e libsvtav1 \
             --svt tune=3 \
+            --svt film_grain=8 \
+            --svt film_grain_denoise=1 \
+            --svt adaptive_film_grain=1 \
             $dv_params \
             --keyint 10s \
             --min-vmaf 92 \
@@ -293,10 +296,10 @@ encode_audio() {
                 bitrate=128
                 ;;
             6)  # 5.1
-                bitrate=320
+                bitrate=256
                 ;;
             8)  # 7.1
-                bitrate=448
+                bitrate=384
                 ;;
             *)  # Default fallback
                 bitrate=$((num_channels * 48))
