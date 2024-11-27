@@ -15,6 +15,27 @@ readonly DIRS=(
 readonly BASE_DIR="/app/videos"
 readonly MIN_FILE_SIZE=1024  # 1KB minimum file size
 
+# Color definitions
+declare -gr RED='\033[0;31m'
+declare -gr GREEN='\033[0;32m'
+declare -gr YELLOW='\033[1;33m'
+declare -gr BLUE='\033[0;34m'
+declare -gr LIGHTBLUE='\033[0;94m'
+declare -gr PURPLE='\033[0;35m'
+declare -gr CYAN='\033[0;36m'
+declare -gr NC='\033[0m' # No Color
+# If not outputting to a terminal, disable colors
+if [[ ! -t 1 ]]; then
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    LIGHTBLUE=''
+    PURPLE=''
+    CYAN=''
+    NC=''
+fi
+
 # Configuration
 config() {
     for dir in "${DIRS[@]}"; do
@@ -24,23 +45,34 @@ config() {
 
 # Logging
 setup_logging() {
-    log "SETUP LOGGING"
-    exec 1> >(tee -a "${LOGS_DIR}/encode_$(date +%Y%m%d_%H%M%S).log")
-    exec 2>&1
+    log "${PURPLE}Setting up logging${NC}"
+    local log_file="${LOGS_DIR}/encode_$(date +%Y%m%d_%H%M%S).log"
+
+    # Direct both stdout and stderr to terminal and log file
+    exec 1> >(tee -a "$log_file")
+    exec 2> >(tee -a "$log_file" >&2)
+
+    # Ensure log file is created with proper permissions
+    touch "$log_file"
+    chmod 644 "$log_file"
 }
 
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} ${GREEN}$*${NC}"
 }
 
 error() {
-    log "ERROR: $*" >&2
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} ${RED}ERROR: $*${NC}" >&2
     exit 1
+}
+
+warn() {
+    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} ${YELLOW}WARNING: $*${NC}"
 }
 
 # Validation functions
 validate_video_file() {
-    log "VALIDATE VIDEO FILE"
+    log "${PURPLE}Validating video files${NC}"
     local file="$1"
     local step="$2"
 
@@ -57,7 +89,7 @@ validate_video_file() {
 }
 
 validate_segments() {
-    log "VALIDATE SEGMENTS"
+    log "${PURPLE}Validating segments${NC}"
     local dir="$1"
     local min_segments=1
 
@@ -69,18 +101,18 @@ validate_segments() {
     local invalid_segments=0
     while IFS= read -r segment; do
         if ! validate_video_file "$segment" "Segment validation" >/dev/null 2>&1; then
-            log "Warning: Invalid segment found: $segment"
+            log "${YELLOW}Warning: Invalid segment found: $segment${NC}"
             ((invalid_segments++))
         fi
     done < <(find "$dir" -name "*.mkv" -type f)
 
     [[ $invalid_segments -gt 0 ]] && error "Found $invalid_segments invalid segments"
 
-    log "Successfully validated $segment_count segments"
+    log "${CYAN}Successfully validated $segment_count segments${NC}"
 }
 
 validate_audio_tracks() {
-    log "VALIDATE AUDIO TRACKS"
+    log "${PURPLE}Validating audio tracks${NC}"
     local base_path="$1"
     local expected_tracks="$2"
 
@@ -95,11 +127,11 @@ validate_audio_tracks() {
         fi
     done
 
-    log "Successfully validated $expected_tracks audio tracks"
+    log "${CYAN}Successfully validated $expected_tracks audio tracks${NC}"
 }
 
 detect_dolby_vision() {
-    log "Detecting Dolby Vision..."
+    log "${PURPLE}Detecting Dolby Vision...${NC}"
     local file="$1"
 
     # Use mediainfo to detect Dolby Vision
@@ -107,11 +139,11 @@ detect_dolby_vision() {
     is_dv=$(mediainfo "$file" | grep "Dolby Vision" || true)
 
     if [[ -n "$is_dv" ]]; then
-        log "Dolby Vision detected"
+        log "${LIGHTBLUE}Dolby Vision detected${NC}"
         # Set DV variables only once at the end
         declare -gr IS_DOLBY_VISION=true
     else
-        log "Dolby Vision not detected. Continuing with standard encoding..."
+        log "${LIGHTBLUE}Dolby Vision not detected. Continuing with standard encoding...${NC}"
         # Set DV variables only once at the end
         declare -gr IS_DOLBY_VISION=false
     fi
@@ -122,19 +154,19 @@ detect_dolby_vision() {
 # Initialization
 init() {
     # Create required directories
-    echo "CREATING REQUIRED DIRECTORIES"
+    log "${PURPLE}Creating required directories${NC}"
     for dir in "${DIRS[@]}"; do
         mkdir -p "${BASE_DIR}/${dir}"
     done
 
     # Find input file
-    log "FINDING INPUT FILE"
+    log "${PURPLE}Finding input file${NC}"
     local input_path
     input_path=$(find "$INPUT_DIR" -type f | head -n 1)
     if [[ -z "$input_path" ]]; then
         error "No input file found in $INPUT_DIR"
     fi
-    log "Found input file: $input_path"
+    log "${LIGHTBLUE}Found input file: $input_path${NC}"
 
     # Validate input file
     validate_video_file "$input_path" "Input validation"
@@ -151,7 +183,7 @@ init() {
 
 # Video processing functions
 segment_video() {
-    log "Segmenting video..."
+    log "${PURPLE}Segmenting video...${NC}"
     ffmpeg -i "$INPUT_PATH" \
         -c:v copy \
         -an \
@@ -166,11 +198,11 @@ segment_video() {
 }
 
 encode_segments() {
-    log "Encoding segments..."
+    log "${PURPLE}Encoding segments...${NC}"
     local segment_count=0
     local total_segments=$(find "${SEGMENTS_DIR}" -name "*.mkv" | wc -l)
-    log "Total segments to encode: $total_segments"
-    log "Segments directory: $SEGMENTS_DIR"
+    log "${PURPLE}Total segments to encode: $total_segments${NC}"
+    log "${PURPLE}Segments directory: $SEGMENTS_DIR${NC}"
 
     cd "$SEGMENTS_DIR"
     # Check if any .mkv files exist first
@@ -182,9 +214,9 @@ encode_segments() {
     fi
 
     for f in *.mkv; do
-        log "Found file - $f"
-        segment_count=$((segment_count + 1)) || { log "Error: Failed to increment segment_count"; exit 1; }
-        log "Encoding segment $segment_count of $total_segments: $f"
+        log "${LIGHTBLUE}Found file - $f${NC}"
+        segment_count=$((segment_count + 1)) || { log "${RED}Error: Failed to increment segment_count${NC}"; exit 1; }
+        log "${PURPLE}Encoding segment $segment_count of $total_segments: $f${NC}"
 
         local dv_params=""
         # Disabling Dolby Vision support for now until there's a way to direcly copy Dolby
@@ -216,18 +248,29 @@ encode_segments() {
 }
 
 concatenate_segments() {
-    log "Concatenating segments..."
+    log "${PURPLE}Concatenating segments${NC}"
+
+    # Create concat file separately without logging
+    local concat_file="${WORKING_DIR}/concat.txt"
+    for f in "${ENCODED_SEGMENTS_DIR}"/*.mkv; do
+        echo "file '$f'" >> "$concat_file"
+    done
+
+    # Use the concat file instead of inline generation
     ffmpeg -f concat -safe 0 \
-        -i <(for f in "${ENCODED_SEGMENTS_DIR}"/*.mkv; do echo "file '$f'"; done) \
+        -i "$concat_file" \
         -c copy "${WORKING_DIR}/${VID_FILE}.mkv"
 
+    # Clean up concat file
+    rm -f "$concat_file"
+
     # Validate concatenated file
-    log "Validate concatenated file"
+    log "${PURPLE}Validate concatenated file${NC}"
     validate_video_file "${WORKING_DIR}/${VID_FILE}.mkv" "Concatenation"
 }
 
 encode_audio() {
-    log "Encoding audio tracks..."
+    log "${PURPLE}Encoding audio tracks...${NC}"
     for ((i=0; i<NUM_AUDIO_TRACKS; i++)); do
         local num_channels
         num_channels=$(ffprobe -v error -select_streams "a:$i" \
@@ -253,7 +296,7 @@ encode_audio() {
                 ;;
         esac
 
-        log "Encoding audio track $i with $num_channels channels at ${bitrate}k"
+        log "${PURPLE}Encoding audio track $i with $num_channels channels at ${bitrate}k${NC}"
         ffmpeg -i "$INPUT_PATH" \
             -map "a:$i" \
             -c:a libopus \
@@ -270,14 +313,14 @@ encode_audio() {
             }
     done
 
-    log "Audio encoding completed successfully"
+    log "${LIGHTBLUE}Audio encoding completed successfully${NC}"
 
     # Validate all audio tracks
     validate_audio_tracks "$WORKING_DIR" "$NUM_AUDIO_TRACKS"
 }
 
 remux_tracks() {
-    log "Remuxing tracks..."
+    log "${PURPLE}Remuxing tracks${NC}"
     local -a input_files=("${WORKING_DIR}/${VID_FILE}.mkv")
     local -a ffmpeg_cmd=(ffmpeg)
 
@@ -320,7 +363,7 @@ remux_tracks() {
 }
 
 cleanup() {
-    log "Cleaning up temporary files..."
+    log "${PURPLE}Cleaning up temporary files${NC}"
     rm -rf "$SEGMENTS_DIR" "$ENCODED_SEGMENTS_DIR" "$WORKING_DIR"
 }
 
@@ -329,8 +372,8 @@ main() {
     setup_logging
     init
 
-    log "Start time: $(date -d @${START_TIME} '+%Y-%m-%d %H:%M:%S')"
-    log "Starting video encoding workflow"
+    log "${CYAN}Start time: $(date -d @${START_TIME} '+%Y-%m-%d %H:%M:%S')${NC}"
+    log "${PURPLE}Starting video encoding workflow${NC}"
 
     segment_video
     encode_segments
@@ -341,18 +384,18 @@ main() {
     cleanup
 
     # Add timing information
-        END_TIME=$(date +%s)
-        DURATION=$((END_TIME - START_TIME))
+    local END_TIME=$(date +%s)
+    local DURATION=$((END_TIME - START_TIME))
 
-        # Convert seconds to hours, minutes, seconds
-        HOURS=$((DURATION / 3600))
-        MINUTES=$(((DURATION % 3600) / 60))
-        SECONDS=$((DURATION % 60))
+    # Convert seconds to hours, minutes, seconds
+    local HOURS=$((DURATION / 3600))
+    local MINUTES=$(((DURATION % 3600) / 60))
+    local SECONDS=$((DURATION % 60))
 
-        log "Encoding workflow complete"
-        log "Start time: $(date -d @${START_TIME} '+%Y-%m-%d %H:%M:%S')"
-        log "End time: $(date -d @${END_TIME} '+%Y-%m-%d %H:%M:%S')"
-        log "Duration: ${HOURS}h ${MINUTES}m ${SECONDS}s"
+    log "${CYAN}Encoding workflow complete${NC}"
+    log "${CYAN}Start time: $(date -d @${START_TIME} '+%Y-%m-%d %H:%M:%S')${NC}"
+    log "${CYAN}End time: $(date -d @${END_TIME} '+%Y-%m-%d %H:%M:%S')${NC}"
+    log "${CYAN}Duration: ${HOURS}h ${MINUTES}m ${SECONDS}s${NC}"
 }
 
 # Run main function
