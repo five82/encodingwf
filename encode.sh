@@ -10,8 +10,8 @@
 # Credit to Reddit user asm-c for the idea and commands.
 # https://www.reddit.com/r/ffmpeg/comments/14dk6zl/chunk_based_encoding_system_abav1/
 
-# This script splits a video into segments and uses ab-av1 to encode the video to a
-# target quality value with VMAF. The segments are reassembled and the audio tracks are
+# This script splits a video into chunks and uses ab-av1 to encode each chunk to a
+# target quality value with VMAF. The chunks are reassembled and the audio tracks are
 # encoded seperately and remuxed.
 
 
