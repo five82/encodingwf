@@ -163,9 +163,11 @@ class VideoEncoder:
             except Exception as cleanup_error:
                 self.logger.error(f"Error during cleanup: {cleanup_error}")
 
-    def print_summary(self, start_time: float) -> None:
+    def print_summary(self) -> None:
         """Print processing summary"""
         end_time = time.time()
+        # Get start time from first processed video
+        start_time = min(stats.start_time for stats in self.stats.values()) if self.stats else time.time()
         total_duration = end_time - start_time
 
         # Convert total duration to hours, minutes, seconds
@@ -185,7 +187,7 @@ class VideoEncoder:
             file_hours, remainder = divmod(int(stats.duration), 3600)
             file_minutes, file_seconds = divmod(remainder, 60)
 
-            self.logger.info(f"{vid_file}:")
+            self.logger.info(f"{vid_file}.mkv:")
             self.logger.info(f"  Duration: {file_hours}h {file_minutes}m {file_seconds}s")
             self.logger.info(f"  Segments: {stats.segment_count}")
             self.logger.info(f"  Audio Tracks: {stats.audio_tracks}")
@@ -220,7 +222,7 @@ class VideoEncoder:
                     continue
 
             # Print summary
-            self.print_summary(start_time)
+            self.print_summary()
 
         except Exception as e:
             self.logger.error(f"Fatal error in encoding workflow: {e}")
