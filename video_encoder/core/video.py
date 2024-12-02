@@ -133,8 +133,12 @@ class VideoProcessor:
             EncodingError: If encoding fails
         """
         output_file = output_dir / segment.name
-        logger.info(f"Encoding segment {segment_num}/{total_segments}: {segment.name} of {input_file}")
-
+        self.logger.info(f"{'='*30}")
+        self.logger.info(f"Encoding segment {segment_num}/{total_segments}")
+        self.logger.info(f"Input: {segment}")
+        self.logger.info(f"Output: {output_file}")
+        self.logger.debug(f"Segment size: {segment.stat().st_size / (1024*1024):.2f} MB")
+        
         try:
             cmd = [
                 'ab-av1', 'auto-encode',
@@ -181,13 +185,13 @@ class VideoProcessor:
             # Validate encoded segment
             self.validator.validate_video_file(output_file, "Segment encoding")
 
-        except subprocess.CalledProcessError as e:
-            raise EncodingError(
-                f"Failed to encode segment {segment.name}: {e.stderr}",
-                segment
-            )
+            self.logger.info(f"Successfully encoded segment {segment_num}/{total_segments}")
+            self.logger.debug(f"Output size: {output_file.stat().st_size / (1024*1024):.2f} MB")
         except Exception as e:
-            raise EncodingError(str(e), segment)
+            self.logger.error(f"Failed to encode segment {segment_num}", exc_info=True)
+            raise
+        finally:
+            self.logger.info(f"{'='*30}")
 
     def encode_segments(self, segments_dir: Path, encoded_dir: Path, input_file: str = "") -> None:
         """

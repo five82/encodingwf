@@ -16,6 +16,7 @@ class Colors:
     PURPLE = '\033[0;35m'
     CYAN = '\033[0;36m'
     NC = '\033[0m'  # No Color
+    GRAY = '\033[1;30m'
 
     @classmethod
     def disable_colors(cls) -> None:
@@ -28,35 +29,40 @@ class Colors:
 class ColoredFormatter(logging.Formatter):
     """Custom formatter adding colors to logs"""
 
-    COLORS = {
-        logging.DEBUG: Colors.BLUE,
-        logging.INFO: Colors.GREEN,
-        logging.WARNING: Colors.YELLOW,
-        logging.ERROR: Colors.RED,
-        logging.CRITICAL: Colors.RED
-    }
+    def __init__(self):
+        super().__init__()
+        self.COLORS = {
+            logging.DEBUG: Colors.LIGHTBLUE,
+            logging.INFO: Colors.GREEN,
+            logging.WARNING: Colors.YELLOW,
+            logging.ERROR: Colors.RED,
+            logging.CRITICAL: Colors.PURPLE
+        }
 
-    def format(self, record: logging.LogRecord) -> str:
-        # Add timestamp with color
-        timestamp = f"{Colors.BLUE}[{self.formatTime(record)}]{Colors.NC}"
-
-        # Add file info if available
-        if hasattr(record, 'current_file') and record.current_file:
-            file_info = f" [{Colors.LIGHTBLUE}{record.current_file}{Colors.NC}]"
-        else:
-            file_info = ""
-
-        # Color the message based on level
+    def format(self, record):
+        # Add more detailed timestamp format
+        timestamp = f"{Colors.GRAY}{datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}{Colors.NC}"
+        
+        # Add process/thread info for debugging
+        thread_info = f"{Colors.GRAY}[{record.process}:{record.thread}]{Colors.NC}" if record.levelno == logging.DEBUG else ""
+        
+        # Add file info with line numbers
+        file_info = f"{Colors.BLUE}[{record.filename}:{record.lineno}]{Colors.NC}"
+        
+        # Add current file being processed if available
+        current_file = f"{Colors.CYAN}[{record.current_file}]{Colors.NC}" if hasattr(record, 'current_file') and record.current_file else ""
+        
+        # Colorize message based on level
         msg_color = self.COLORS.get(record.levelno, Colors.NC)
         message = f"{msg_color}{record.getMessage()}{Colors.NC}"
 
         # Combine all parts
-        log_entry = f"{timestamp}{file_info} {message}"
+        log_entry = f"{timestamp} {thread_info}{file_info}{current_file} {message}"
 
-        # Add exception info if present
+        # Add exception info with full traceback if present
         if record.exc_info:
             exc_text = self.formatException(record.exc_info)
-            log_entry += f"\n{Colors.RED}{exc_text}{Colors.NC}"
+            log_entry += f"\n{Colors.RED}{'='*50}\nException details:\n{exc_text}\n{'='*50}{Colors.NC}"
 
         return log_entry
 

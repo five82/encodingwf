@@ -93,7 +93,10 @@ class VideoEncoder:
             total_files: Total number of files to process
         """
         vid_file = input_path.stem
-        self.logger.info(f"Processing file {current_file} of {total_files}: {input_path}")
+        self.logger.info(f"{'='*50}")
+        self.logger.info(f"Starting file {current_file}/{total_files}: {input_path}")
+        self.logger.info(f"File size: {input_path.stat().st_size / (1024*1024):.2f} MB")
+        self.logger.info(f"{'='*50}")
 
         # Initialize stats
         self.stats[vid_file] = ProcessingStats(
@@ -107,18 +110,17 @@ class VideoEncoder:
         self.logger.set_current_file(input_path.name)
 
         try:
-            # Prepare working directories
+            self.logger.info(f"Processing stages for {vid_file}:")
+            self.logger.info("1. Preparing working directories")
             self.cleanup_working_dirs(vid_file)
 
-            # Get directory paths
+            self.logger.info("2. Getting directory paths")
             segments_dir = self.config.get_dir("segments")
             encoded_dir = self.config.get_dir("encoded_segments")
             working_dir = self.config.get_dir("working")
             output_dir = self.config.get_dir("output")
 
-            # Process video
-            self.logger.info("Starting video processing")
-
+            self.logger.info("3. Starting video processing")
             # Detect Dolby Vision and segment video
             self.video_processor.detect_dolby_vision(input_path)
             self.video_processor.segment_video(input_path, segments_dir)
@@ -149,19 +151,12 @@ class VideoEncoder:
             self.logger.info(f"Completed processing: {input_path}")
 
         except Exception as e:
-            self.logger.error(f"Error processing {input_path}: {e}")
-            # Update end time even if there's an error
-            self.stats[vid_file].end_time = time.time()
+            self.logger.error(f"Failed to process {vid_file}: {str(e)}", exc_info=True)
             raise
-
         finally:
-            # Clear current file from logger context
-            self.logger.set_current_file(None)
-            # Ensure cleanup happens even if there's an error
-            try:
-                self.cleanup_working_dirs(vid_file)
-            except Exception as cleanup_error:
-                self.logger.error(f"Error during cleanup: {cleanup_error}")
+            self.logger.info(f"{'='*50}")
+            self.logger.info(f"Completed processing {vid_file}")
+            self.logger.info(f"{'='*50}")
 
     def print_summary(self) -> None:
         """Print processing summary"""
