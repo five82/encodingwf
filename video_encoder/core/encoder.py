@@ -172,21 +172,20 @@ class VideoEncoder:
         hours, remainder = divmod(int(total_duration), 3600)
         minutes, seconds = divmod(remainder, 60)
 
-        # Print summary
-        self.logger.info("\n=== Encoding Summary ===")
+        # Print summary with timestamps
+        self.logger.info("=== Encoding Summary ===")
         self.logger.info("Overall Process:")
-        self.logger.info(f"Start time: {datetime.fromtimestamp(start_time):%Y-%m-%d %H:%M:%S}")
-        self.logger.info(f"End time: {datetime.fromtimestamp(end_time):%Y-%m-%d %H:%M:%S}")
+        self.logger.info(f"Start time: {datetime.fromtimestamp(start_time).strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info(f"End time: {datetime.fromtimestamp(end_time).strftime('%Y-%m-%d %H:%M:%S')}")
         self.logger.info(f"Total Duration: {hours}h {minutes}m {seconds}s")
 
-        self.logger.info("\nIndividual Video Processing Times:")
+        self.logger.info("Individual Video Processing Times:")
         for vid_file in self.processed_videos:
             stats = self.stats[vid_file]
-            # Convert file duration to hours, minutes, seconds
             file_hours, remainder = divmod(int(stats.duration), 3600)
             file_minutes, file_seconds = divmod(remainder, 60)
 
-            self.logger.info(f"\n{vid_file}:")
+            self.logger.info(f"{vid_file}:")
             self.logger.info(f"  Duration: {file_hours}h {file_minutes}m {file_seconds}s")
             self.logger.info(f"  Segments: {stats.segment_count}")
             self.logger.info(f"  Audio Tracks: {stats.audio_tracks}")
@@ -196,7 +195,7 @@ class VideoEncoder:
                 self.logger.info(f"  Input Size: {stats.input_size / 1024 / 1024:.2f} MB")
                 self.logger.info(f"  Output Size: {stats.output_size / 1024 / 1024:.2f} MB")
 
-        self.logger.info("\nEncoding workflow complete")
+        self.logger.info("Encoding workflow complete")
 
     def run(self) -> None:
         """Main execution method"""
